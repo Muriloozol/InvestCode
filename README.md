@@ -1,3 +1,3 @@
 # InvestCode
 
-![Diagram](Architecture.png)
+![Diagram](architecture.png)
