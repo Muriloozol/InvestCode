@@ -5,10 +5,6 @@ import numpy as np
 url_general = 'https://www.fundamentus.com.br/resultado.php'
 url_paper = 'https://www.fundamentus.com.br/detalhes.php?papel='          
 
-stocks = pd.DataFrame()
-
-now = pd.Timestamp.now()
-
 def get_papers():
     res = re.get(url_general)
     
@@ -63,13 +59,9 @@ def get_paper_info(paper: str):
 
 def save_data(papers: list):
     holder = list()
-    progress = 0
-    
     for paper in papers.index:
         paper_info = get_paper_info(paper)
             
-        progress += 1
-        
         holder.append(paper_info)
         
     save = pd.DataFrame(holder)
