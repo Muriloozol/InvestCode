@@ -1,9 +1,18 @@
-import requests as re
+import time
+import os
+
 import pandas as pd
+import requests as re
 import numpy as np
+import asyncio
+from aiohttp import ClientSession
+from loguru import logger
+
 
 url_general = 'https://www.fundamentus.com.br/resultado.php'
 url_paper = 'https://www.fundamentus.com.br/detalhes.php?papel='          
+
+data_to_save = list()
 
 def get_papers():
     res = re.get(url_general)
@@ -17,14 +26,16 @@ def get_papers():
     
     return df[df['Cotação'] > 0]
 
-def get_paper_info(paper: str):
-    res = re.get(url_paper + paper)
-        
-    df_list = pd.read_html(res.text)
+async def get_paper_info(paper: str, save=False):
+    async with ClientSession() as session:
+        time.sleep(0.1)
+        resp = await session.request(method='GET', url=url_paper+paper)
+        time.sleep(0.1)
+        html = await resp.text()
+        df_list = pd.read_html(html)
     
     cleaner = lambda x: x.replace('?', '')\
                          .replace('.', '')\
-                         .replace(',', '.')\
                          if isinstance(x, str) else x
     
     # Separate and clean diferent tables found on page
@@ -40,37 +51,95 @@ def get_paper_info(paper: str):
     df4.drop([0, 1], inplace=True)
 
     index = pd.concat([
-        'Info: ' + df0[0][1:],
-        'PriceInfo: ' + df0[2],
-        'MarketValue: ' + df1[0].append(df1[2]),
-        'Oscilations: ' + df2[0],
-        'FundamentalIndicators: ' + df2[2].append(df2[4]),
-        'BalanceSheet: ' + df3[0].append(df3[2]),
-        'Demonstrative12M: ' + df4[0],
-        'Demontrative3M: ' + df4[2]], ignore_index=True)
+        df0[0][1:],
+        df0[2],
+        df1[0].append(df1[2]),
+        'oscilations_' + df2[0],
+        'indicator_' + df2[2].append(df2[4]),
+        df3[0].append(df3[2]),
+        'demonstrative12m_' + df4[0],
+        'demontrative3m_' + df4[2]], ignore_index=True)
 
     data = df0[1][1:].append([df0[3],
                               df1[1], df1[3],
                               df2[1], df2[3], df2[5],
                               df3[1], df3[3],
                               df4[1], df4[3]]).values
-
-    return pd.Series(index=index, data=data, name=paper)
-
-def save_data(papers: list):
-    holder = list()
-    for paper in papers.index:
-        paper_info = get_paper_info(paper)
-            
-        holder.append(paper_info)
+    
+    output = pd.Series(index=index, data=data, name=paper) 
+    
+    if save: data_to_save.append(output)
         
-    save = pd.DataFrame(holder)
+    logger.info(f'Terminou: {paper}')
     
-    save.to_csv('./data/data.csv')
-    
-    return save
+    return output
 
 def load_csv(path='./data/data.csv', index_col='Unnamed: 0'):
-    data = pd.read_csv(path, index_col=index_col)
+    return pd.read_csv(path, index_col=index_col)
+
+async def wrapper():
+    status = bool()
+    papers = get_papers().index
     
-    return data
+    # Try to load data from previous attempts
+    try:
+        partial = load_csv(path='partial_data.csv').index
+        papers = papers.difference(partial)
+        if papers.empty: raise Exception('You are up to date')
+
+    except FileNotFoundError:
+        logger.info('Arquivo partial_data.csv não encontrado registro encontrado, um novo será gerado')
+    
+    logger.info(f'Procurando por {papers.shape}...')
+    
+    tasks = list()
+    for paper in papers:
+        tasks.append(get_paper_info(paper, save=True))
+        
+    try:
+        await asyncio.gather(*tasks)
+        
+    # Errors collecting data
+    except:
+        df = pd.DataFrame(data_to_save)
+        df.to_csv('partial_data.csv', mode='a')
+        logger.info('Dados parciais salvos')
+        status = True
+        
+    # All papers reached
+    else: 
+        df = pd.DataFrame(data_to_save)
+        df.to_csv('partial_data.csv', mode='a')
+        
+        # Save data.csv at data directory remove 
+        final_data = load_csv('partial_data.csv')
+        final_data = final_data[final_data.index.dropna()]
+        final_data.to_csv('./data/data.csv')
+        
+        # Remove partial result
+        os.remove('partial_data.csv')
+        
+        logger.info('DADOS SALVOS NA PASTA DATA')
+        status = False
+        
+    # Logs about every operation
+    finally:
+        success = df.shape[0]/papers.shape[0]
+        
+        logger.info(f'{df.shape[0]} Salvos')
+        logger.info(f'Taxa de resposta: {np.round(success)}%')
+        
+        return status
+        
+def run_wrapper():
+    status = True
+    while status:
+        status = asyncio.run(wrapper())
+        
+        if status: 
+            logger.info('Refazendo operação')
+            time.sleep(5)
+        
+        
+if __name__ == '__main__':
+    run_wrapper()
