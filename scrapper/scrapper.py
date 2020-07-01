@@ -14,7 +14,7 @@ url_paper = 'https://www.fundamentus.com.br/detalhes.php?papel='
 
 data_to_save = list()
 
-def get_papers():
+def get_papers() -> pd.DataFrame:
     res = re.get(url_general)
     
     df = pd.read_html(res.content)[0]
@@ -26,17 +26,18 @@ def get_papers():
     
     return df[df['Cotação'] > 0]
 
-async def get_paper_info(paper: str, save=False):
+async def get_paper_info(paper: str, save=False) -> pd.Series:
     async with ClientSession() as session:
         time.sleep(0.1)
+        
         resp = await session.request(method='GET', url=url_paper+paper)
+        
         time.sleep(0.1)
+        
         html = await resp.text()
         df_list = pd.read_html(html)
     
-    cleaner = lambda x: x.replace('?', '')\
-                         .replace('.', '')\
-                         if isinstance(x, str) else x
+    cleaner = lambda x: x.replace('?', '') if isinstance(x, str) else x
     
     # Separate and clean diferent tables found on page
     df0 = df_list[0].applymap(cleaner)
@@ -74,21 +75,23 @@ async def get_paper_info(paper: str, save=False):
     
     return output
 
-def load_csv(path='./data/data.csv', index_col='Unnamed: 0'):
+def load_csv(path='./data/data.csv', index_col='Unnamed: 0') -> pd.DataFrame:
     return pd.read_csv(path, index_col=index_col)
 
-async def wrapper():
-    status = bool()
+async def wrapper() -> bool:
+    status = False
     papers = get_papers().index
     
     # Try to load data from previous attempts
     try:
         partial = load_csv(path='partial_data.csv').index
         papers = papers.difference(partial)
-        if papers.empty: raise Exception('You are up to date')
+        if papers.empty: 
+            logger.info('You are up to date')
+            return status
 
     except FileNotFoundError:
-        logger.info('Arquivo partial_data.csv não encontrado registro encontrado, um novo será gerado')
+        logger.info('Arquivo partial_data.csv não encontrado, um novo será gerado')
     
     logger.info(f'Procurando por {papers.shape}...')
     
@@ -106,39 +109,42 @@ async def wrapper():
         logger.info('Dados parciais salvos')
         status = True
         
-    # All papers reached
-    else: 
-        df = pd.DataFrame(data_to_save)
-        df.to_csv('partial_data.csv', mode='a')
-        
-        # Save data.csv at data directory remove 
-        final_data = load_csv('partial_data.csv')
-        final_data = final_data[final_data.index.dropna()]
-        final_data.to_csv('./data/data.csv')
-        
-        # Remove partial result
-        os.remove('partial_data.csv')
-        
-        logger.info('DADOS SALVOS NA PASTA DATA')
-        status = False
-        
     # Logs about every operation
     finally:
         success = df.shape[0]/papers.shape[0]
         
         logger.info(f'{df.shape[0]} Salvos')
-        logger.info(f'Taxa de resposta: {np.round(success)}%')
+        logger.info(f'Taxa de resposta: {np.round(100*success)}%')
         
         return status
         
 def run_wrapper():
     status = True
     while status:
+        data_to_save = list()
         status = asyncio.run(wrapper())
         
         if status: 
             logger.info('Refazendo operação')
             time.sleep(5)
+            
+        # All papers reached
+        else: 
+            df = pd.DataFrame(data_to_save)
+            df.to_csv('partial_data.csv', mode='a')
+
+            today = pd.Timestamp.today()
+            day, month, year = today.day, today.month, today.year
+            
+            # Save data_day_month_year.csv at data directory remove 
+            final_data = load_csv('partial_data.csv')
+            final_data = final_data[final_data.index.notna()]
+            final_data.to_csv(f'../data/data_{day}_{month}_{year}.csv')
+
+            # Remove partial result
+            os.remove('partial_data.csv')
+
+            logger.info('DADOS SALVOS NA PASTA DATA')
         
         
 if __name__ == '__main__':
