@@ -100,7 +100,7 @@ async def wrapper() -> bool:
         tasks.append(get_paper_info(paper, save=True))
         
     try:
-        await asyncio.gather(*tasks)
+    	await asyncio.gather(*tasks)
         
     # Errors collecting data
     except:
@@ -111,6 +111,7 @@ async def wrapper() -> bool:
         
     # Logs about every operation
     finally:
+        df = pd.DataFrame(data_to_save)
         success = df.shape[0]/papers.shape[0]
         
         logger.info(f'{df.shape[0]} Salvos')
